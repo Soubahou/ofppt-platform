@@ -1,0 +1,132 @@
+version: '3.9'
+
+# ─────────────────────────────────────────────────────────────────────────────
+# FULL STACK — auth + academic services together from scratch
+#
+# Use this when you want to spin up everything in one command:
+#
+#   docker compose -f docker-compose.full.yml up --build
+#
+# Requires auth-service folder to be a sibling of academic-service:
+#
+#   project-root/
+#   ├── auth-service/        ← must exist
+#   └── academic-service/    ← run compose from here
+# ─────────────────────────────────────────────────────────────────────────────
+
+networks:
+  ofppt_network:
+    driver: bridge
+
+volumes:
+  auth_db_data:
+  academic_db_data:
+
+services:
+
+  # ── Auth Database ───────────────────────────────────────────────────────────
+  auth-db:
+    image: mysql:8.0
+    container_name: auth-db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${AUTH_MYSQL_ROOT_PASSWORD:-rootpassword}
+      MYSQL_DATABASE:      auth_db
+      MYSQL_USER:          ${AUTH_MYSQL_USER:-authuser}
+      MYSQL_PASSWORD:      ${AUTH_MYSQL_PASSWORD:-authpassword}
+    ports:
+      - "3307:3306"
+    volumes:
+      - auth_db_data:/var/lib/mysql
+    networks:
+      - ofppt_network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${AUTH_MYSQL_ROOT_PASSWORD:-rootpassword}"]
+      interval: 10s
+      timeout:  5s
+      retries:  10
+      start_period: 30s
+
+  # ── Auth Service ────────────────────────────────────────────────────────────
+  auth-service:
+    build:
+      context: ../auth-service
+      dockerfile: Dockerfile
+    container_name: auth-service
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    environment:
+      NODE_ENV:              ${NODE_ENV:-production}
+      PORT:                  3001
+      DATABASE_URL:          mysql://${AUTH_MYSQL_USER:-authuser}:${AUTH_MYSQL_PASSWORD:-authpassword}@auth-db:3306/auth_db
+      JWT_SECRET:            ${JWT_SECRET:-change-this-in-production}
+      JWT_REFRESH_SECRET:    ${JWT_REFRESH_SECRET:-change-this-refresh-in-production}
+      JWT_EXPIRES_IN:        ${JWT_EXPIRES_IN:-15m}
+      JWT_REFRESH_EXPIRES_IN: ${JWT_REFRESH_EXPIRES_IN:-7d}
+      FRONTEND_URL:          ${FRONTEND_URL:-http://localhost:5173}
+    depends_on:
+      auth-db:
+        condition: service_healthy
+    networks:
+      - ofppt_network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3001/health"]
+      interval: 15s
+      timeout:  5s
+      retries:  5
+      start_period: 40s
+
+  # ── Academic Database ───────────────────────────────────────────────────────
+  academic-db:
+    image: mysql:8.0
+    container_name: academic-db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${ACADEMIC_MYSQL_ROOT_PASSWORD:-rootpassword}
+      MYSQL_DATABASE:      academic_db
+      MYSQL_USER:          ${ACADEMIC_MYSQL_USER:-acaduser}
+      MYSQL_PASSWORD:      ${ACADEMIC_MYSQL_PASSWORD:-acadpassword}
+    ports:
+      - "3308:3306"
+    volumes:
+      - academic_db_data:/var/lib/mysql
+    networks:
+      - ofppt_network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${ACADEMIC_MYSQL_ROOT_PASSWORD:-rootpassword}"]
+      interval: 10s
+      timeout:  5s
+      retries:  10
+      start_period: 30s
+
+  # ── Academic Service ────────────────────────────────────────────────────────
+  academic-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: academic-service
+    restart: unless-stopped
+    ports:
+      - "3002:3002"
+    environment:
+      NODE_ENV:                          ${NODE_ENV:-production}
+      PORT:                              3002
+      DATABASE_URL:                      mysql://${ACADEMIC_MYSQL_USER:-acaduser}:${ACADEMIC_MYSQL_PASSWORD:-acadpassword}@academic-db:3306/academic_db
+      AUTH_SERVICE_URL:                  http://auth-service:3001
+      FRONTEND_URL:                      ${FRONTEND_URL:-http://localhost:5173}
+      CANCELLED_INSTANCE_RETENTION_DAYS: ${CANCELLED_INSTANCE_RETENTION_DAYS:-30}
+      LOG_LEVEL:                         ${LOG_LEVEL:-info}
+    depends_on:
+      academic-db:
+        condition: service_healthy
+      auth-service:
+        condition: service_healthy
+    networks:
+      - ofppt_network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3002/health"]
+      interval: 15s
+      timeout:  5s
+      retries:  5
+      start_period: 30s

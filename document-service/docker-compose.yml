@@ -1,0 +1,55 @@
+version: '3.9'
+
+services:
+
+  document-db:
+    image: mysql:8.0
+    container_name: document-db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DOCUMENT_MYSQL_ROOT_PASSWORD:-rootpassword}
+      MYSQL_DATABASE:      document_db
+      MYSQL_USER:          ${DOCUMENT_MYSQL_USER:-docuser}
+      MYSQL_PASSWORD:      ${DOCUMENT_MYSQL_PASSWORD:-docpassword}
+    ports:
+      - '3309:3306'
+    volumes:
+      - document_db_data:/var/lib/mysql
+    healthcheck:
+      test: ['CMD', 'mysqladmin', 'ping', '-h', 'localhost']
+      interval: 10s
+      timeout:  5s
+      retries:  5
+
+  document-service:
+    build: .
+    container_name: document-service
+    restart: unless-stopped
+    depends_on:
+      document-db:
+        condition: service_healthy
+    ports:
+      - '3003:3003'
+    environment:
+      PORT:              3003
+      NODE_ENV:          development
+      DATABASE_URL:      mysql://${DOCUMENT_MYSQL_USER:-docuser}:${DOCUMENT_MYSQL_PASSWORD:-docpassword}@document-db:3306/document_db
+      # Point to external running instances when testing standalone
+      AUTH_SERVICE_URL:     ${AUTH_SERVICE_URL:-http://host.docker.internal:3001}
+      ACADEMIC_SERVICE_URL: ${ACADEMIC_SERVICE_URL:-http://host.docker.internal:3002}
+      FRONTEND_URL:      ${FRONTEND_URL:-http://localhost:5173}
+      UPLOAD_DIR:        uploads
+      MAX_DOCUMENT_SIZE_MB:   20
+      MAX_SUBMISSION_SIZE_MB: 10
+      LOG_LEVEL:         info
+    volumes:
+      - document_uploads_data:/app/uploads
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://localhost:3003/api/health']
+      interval: 15s
+      timeout:  5s
+      retries:  3
+
+volumes:
+  document_db_data:
+  document_uploads_data:

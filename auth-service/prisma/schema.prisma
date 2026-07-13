@@ -1,0 +1,63 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                   Int            @id @default(autoincrement())
+  first_name           String         @db.VarChar(50)
+  last_name            String         @db.VarChar(50)
+  email                String         @unique @db.VarChar(255)
+  password_hash        String         @db.VarChar(255)
+  date_of_birth        DateTime       @db.Date
+  must_change_password Boolean        @default(true)
+  avatar               String?        @db.VarChar(255)
+  created_at           DateTime       @default(now())
+  updated_at           DateTime       @updatedAt
+  role_id              Int
+  role                 Role           @relation(fields: [role_id], references: [id])
+  refresh_tokens       RefreshToken[]
+}
+
+model Role {
+  id          Int             @id @default(autoincrement())
+  name        String          @unique @db.VarChar(50)
+  description String?         @db.VarChar(255)
+  users       User[]
+  permissions RolePermission[]
+}
+
+model Permission {
+  id          Int             @id @default(autoincrement())
+  action      String          @db.VarChar(50)
+  resource    String          @db.VarChar(50)
+  description String?         @db.VarChar(255)
+  roles       RolePermission[]
+
+  @@unique([action, resource])
+}
+
+model RolePermission {
+  role_id       Int
+  permission_id Int
+  role          Role       @relation(fields: [role_id], references: [id])
+  permission    Permission @relation(fields: [permission_id], references: [id])
+
+  @@id([role_id, permission_id])
+}
+
+model RefreshToken {
+  id         Int      @id @default(autoincrement())
+  token      String   @unique @db.VarChar(500)
+  user_id    Int
+  // CASCADE so that deleting a user automatically removes their sessions
+  user       User     @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  expires_at DateTime
+  created_at DateTime @default(now())
+
+  @@index([user_id])
+}

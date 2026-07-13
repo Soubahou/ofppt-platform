@@ -1,0 +1,183 @@
+generator client {
+  provider = "prisma-client-js"
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Organisational ───────────────────────────────────────────────────────────
+
+model Branch {
+  id           Int      @id @default(autoincrement())
+  name         String   @unique @db.VarChar(100)
+  max_students Int
+  created_at   DateTime @default(now())
+
+  groups Group[]
+}
+
+model Group {
+  id           Int    @id @default(autoincrement())
+  name         String @db.VarChar(50)
+  branch_id    Int
+  max_students Int
+
+  branch                Branch               @relation(fields: [branch_id], references: [id], onDelete: Cascade)
+  students              Student[]
+  module_teacher_groups ModuleTeacherGroup[]
+
+  @@unique([name, branch_id])
+}
+
+// ─── Academic ─────────────────────────────────────────────────────────────────
+
+model Module {
+  id          Int        @id @default(autoincrement())
+  name        String     @unique @db.VarChar(100)
+  type        ModuleType
+  credits     Int
+  total_hours Int
+
+  module_teachers ModuleTeacher[]
+}
+
+enum ModuleType {
+  theoretical
+  practical
+}
+
+model Room {
+  id       Int    @id @default(autoincrement())
+  name     String @unique @db.VarChar(50)
+  capacity Int
+
+  sessions          Session[]
+  session_instances SessionInstance[] @relation("OverrideRoom")
+}
+
+// ─── Profiles (user_id is a soft FK to auth-service users.id) ─────────────────
+
+model Teacher {
+  user_id        Int      @id
+  specialization String   @db.VarChar(100)
+  hire_date      DateTime @db.Date
+
+  module_teachers ModuleTeacher[]
+}
+
+model Student {
+  user_id         Int      @id
+  group_id        Int?
+  enrollment_date DateTime @db.Date
+
+  group Group? @relation(fields: [group_id], references: [id], onDelete: SetNull)
+}
+
+// ─── Module → Teacher assignment ──────────────────────────────────────────────
+
+model ModuleTeacher {
+  id         Int @id @default(autoincrement())
+  module_id  Int
+  teacher_id Int
+
+  module                Module               @relation(fields: [module_id], references: [id], onDelete: Cascade)
+  teacher               Teacher              @relation(fields: [teacher_id], references: [user_id], onDelete: Cascade)
+  module_teacher_groups ModuleTeacherGroup[]
+
+  @@unique([module_id, teacher_id])
+  @@index([teacher_id])
+}
+
+// ─── ModuleTeacher → Group assignment (timetable unit) ────────────────────────
+
+model ModuleTeacherGroup {
+  id                Int     @id @default(autoincrement())
+  module_teacher_id Int
+  group_id          Int
+  hours_required    Int
+  hours_completed   Int     @default(0)
+  is_active         Boolean @default(true)
+
+  module_teacher ModuleTeacher @relation(fields: [module_teacher_id], references: [id], onDelete: Cascade)
+  group          Group         @relation(fields: [group_id], references: [id], onDelete: Cascade)
+  sessions       Session[]
+
+  @@unique([module_teacher_id, group_id])
+  @@index([group_id])
+}
+
+// ─── Recurring sessions (one row per weekly slot) ────────────────────────────
+
+model Session {
+  id                    Int     @id @default(autoincrement())
+  module_teacher_group_id Int
+  day_of_week           Int?    @db.TinyInt  // 0=Mon … 6=Sun
+  start_slot            Int?    @db.TinyInt  // slot index within the day
+  slot_count            Int     @db.TinyInt  // how many consecutive slots
+  is_online             Boolean @default(false)
+  room_id               Int?
+
+  module_teacher_group ModuleTeacherGroup @relation(fields: [module_teacher_group_id], references: [id], onDelete: Cascade)
+  room                 Room?              @relation(fields: [room_id], references: [id], onDelete: SetNull)
+  instances            SessionInstance[]
+
+  @@index([module_teacher_group_id])
+  @@index([room_id])
+}
+
+// ─── Dated instances of recurring sessions ───────────────────────────────────
+
+model SessionInstance {
+  id               Int      @id @default(autoincrement())
+  session_id       Int
+  date             DateTime @db.Date
+  is_cancelled     Boolean  @default(false)
+  override_room_id Int?
+
+  session       Session @relation(fields: [session_id], references: [id], onDelete: Cascade)
+  override_room Room?   @relation("OverrideRoom", fields: [override_room_id], references: [id], onDelete: SetNull)
+
+  absence_sessions AbsenceSession[]
+
+  @@unique([session_id, date])
+  @@index([date])
+  @@index([override_room_id])
+}
+
+// ─── Absences ─────────────────────────────────────────────────────────────────
+
+model Absence {
+  id            Int           @id @default(autoincrement())
+  user_id       Int           // soft FK → auth-service users.id (student)
+  reason        String?       @db.Text
+  justification String?       @db.Text  // filled in by student after the fact
+  status        AbsenceStatus @default(pending)
+  justified     Boolean       @default(false)
+  created_at    DateTime      @default(now())
+  updated_at    DateTime      @updatedAt
+
+  sessions AbsenceSession[]
+
+  @@index([user_id])
+  @@index([status])
+}
+
+enum AbsenceStatus {
+  pending
+  approved
+  rejected
+}
+
+model AbsenceSession {
+  absence_id  Int
+  instance_id Int   // references a specific dated session instance
+
+  absence  Absence         @relation(fields: [absence_id],  references: [id], onDelete: Cascade)
+  instance SessionInstance @relation(fields: [instance_id], references: [id], onDelete: Cascade)
+
+  @@id([absence_id, instance_id])
+  @@index([instance_id])
+}

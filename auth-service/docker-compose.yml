@@ -1,0 +1,63 @@
+services:
+
+  # ─────────────────────────────────────────────────────────
+  # MySQL Database
+  # ─────────────────────────────────────────────────────────
+  auth-db:
+    image: mysql:8.0
+    container_name: auth-db
+    restart: unless-stopped
+
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-rootpassword}
+      MYSQL_DATABASE: auth_db
+      MYSQL_USER: ${MYSQL_USER:-authuser}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-authpassword}
+
+    ports:
+      - "3307:3306"
+
+    volumes:
+      - auth_db_data:/var/lib/mysql
+
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -uroot -p$$MYSQL_ROOT_PASSWORD"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 30s
+
+  # ─────────────────────────────────────────────────────────
+  # Auth Service
+  # ─────────────────────────────────────────────────────────
+  auth-service:
+    build: .
+    container_name: auth-service
+    restart: unless-stopped
+
+    ports:
+      - "3001:3001"
+
+    environment:
+      DATABASE_URL: mysql://${MYSQL_USER:-authuser}:${MYSQL_PASSWORD:-authpassword}@auth-db:3306/auth_db
+      JWT_SECRET: ${JWT_SECRET:-change-this-secret-in-production}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-change-this-refresh-secret-in-production}
+      JWT_EXPIRES_IN: 15m
+      JWT_REFRESH_EXPIRES_IN: 7d
+      PORT: 3001
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
+      EMAIL_DOMAIN: ${EMAIL_DOMAIN:-ofppt.ma}
+      UPLOAD_DIR: ${UPLOAD_DIR:-uploads}
+      NODE_ENV: ${NODE_ENV:-production}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+
+    volumes:
+      - uploads_data:/app/uploads
+
+    depends_on:
+      auth-db:
+        condition: service_healthy
+
+volumes:
+  auth_db_data:
+  uploads_data:

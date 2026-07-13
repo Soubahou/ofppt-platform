@@ -1,0 +1,202 @@
+version: '3.9'
+
+networks:
+  ofppt_network:
+    driver: bridge
+
+volumes:
+  auth_db_data:
+  academic_db_data:
+  document_db_data:
+  document_uploads_data:
+
+services:
+
+  auth-db:
+    image: mysql:8.0
+    container_name: auth-db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${AUTH_MYSQL_ROOT_PASSWORD:-rootpassword}
+      MYSQL_DATABASE:      auth_db
+      MYSQL_USER:          ${AUTH_MYSQL_USER:-authuser}
+      MYSQL_PASSWORD:      ${AUTH_MYSQL_PASSWORD:-authpassword}
+    volumes:
+      - auth_db_data:/var/lib/mysql
+    networks:
+      - ofppt_network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${AUTH_MYSQL_ROOT_PASSWORD:-rootpassword}"]
+      interval: 10s
+      timeout:  5s
+      retries:  10
+      start_period: 30s
+
+  auth-service:
+    build:
+      context: ./auth-service
+      dockerfile: Dockerfile
+    container_name: auth-service
+    restart: unless-stopped
+    expose:
+      - "3001"
+    environment:
+      NODE_ENV:               production
+      PORT:                   3001
+      DATABASE_URL:           mysql://${AUTH_MYSQL_USER:-authuser}:${AUTH_MYSQL_PASSWORD:-authpassword}@auth-db:3306/auth_db
+      JWT_SECRET:             ${JWT_SECRET:?JWT_SECRET is required}
+      JWT_REFRESH_SECRET:     ${JWT_REFRESH_SECRET:?JWT_REFRESH_SECRET is required}
+      JWT_EXPIRES_IN:         ${JWT_EXPIRES_IN:-15m}
+      JWT_REFRESH_EXPIRES_IN: ${JWT_REFRESH_EXPIRES_IN:-7d}
+      FRONTEND_URL:           ${FRONTEND_URL:-http://localhost:5173}
+      EMAIL_DOMAIN:           ${EMAIL_DOMAIN:-ofppt.ma}
+      UPLOAD_DIR:             uploads
+      LOG_LEVEL:              ${LOG_LEVEL:-info}
+    depends_on:
+      auth-db:
+        condition: service_healthy
+    networks:
+      - ofppt_network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3001/health"]
+      interval: 15s
+      timeout:  5s
+      retries:  5
+      start_period: 40s
+
+  academic-db:
+    image: mysql:8.0
+    container_name: academic-db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${ACADEMIC_MYSQL_ROOT_PASSWORD:-rootpassword}
+      MYSQL_DATABASE:      academic_db
+      MYSQL_USER:          ${ACADEMIC_MYSQL_USER:-acaduser}
+      MYSQL_PASSWORD:      ${ACADEMIC_MYSQL_PASSWORD:-acadpassword}
+    volumes:
+      - academic_db_data:/var/lib/mysql
+    networks:
+      - ofppt_network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${ACADEMIC_MYSQL_ROOT_PASSWORD:-rootpassword}"]
+      interval: 10s
+      timeout:  5s
+      retries:  10
+      start_period: 30s
+
+  academic-service:
+    build:
+      context: ./academic-service
+      dockerfile: Dockerfile
+    container_name: academic-service
+    restart: unless-stopped
+    expose:
+      - "3002"
+    environment:
+      NODE_ENV:                          production
+      PORT:                              3002
+      DATABASE_URL:                      mysql://${ACADEMIC_MYSQL_USER:-acaduser}:${ACADEMIC_MYSQL_PASSWORD:-acadpassword}@academic-db:3306/academic_db
+      AUTH_SERVICE_URL:                  http://auth-service:3001
+      FRONTEND_URL:                      ${FRONTEND_URL:-http://localhost:5173}
+      LOG_LEVEL:                         ${LOG_LEVEL:-info}
+      CANCELLED_INSTANCE_RETENTION_DAYS: ${CANCELLED_INSTANCE_RETENTION_DAYS:-30}
+    depends_on:
+      academic-db:
+        condition: service_healthy
+      auth-service:
+        condition: service_healthy
+    networks:
+      - ofppt_network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3002/health"]
+      interval: 15s
+      timeout:  5s
+      retries:  5
+      start_period: 40s
+
+  document-db:
+    image: mysql:8.0
+    container_name: document-db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DOCUMENT_MYSQL_ROOT_PASSWORD:-rootpassword}
+      MYSQL_DATABASE:      document_db
+      MYSQL_USER:          ${DOCUMENT_MYSQL_USER:-docuser}
+      MYSQL_PASSWORD:      ${DOCUMENT_MYSQL_PASSWORD:-docpassword}
+    volumes:
+      - document_db_data:/var/lib/mysql
+    networks:
+      - ofppt_network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${DOCUMENT_MYSQL_ROOT_PASSWORD:-rootpassword}"]
+      interval: 10s
+      timeout:  5s
+      retries:  10
+      start_period: 30s
+
+  document-service:
+    build:
+      context: ./document-service
+      dockerfile: Dockerfile
+    container_name: document-service
+    restart: unless-stopped
+    expose:
+      - "3003"
+    environment:
+      NODE_ENV:              production
+      PORT:                  3003
+      DATABASE_URL:          mysql://${DOCUMENT_MYSQL_USER:-docuser}:${DOCUMENT_MYSQL_PASSWORD:-docpassword}@document-db:3306/document_db
+      AUTH_SERVICE_URL:      http://auth-service:3001
+      ACADEMIC_SERVICE_URL:  http://academic-service:3002
+      FRONTEND_URL:          ${FRONTEND_URL:-http://localhost:5173}
+      UPLOAD_DIR:            uploads
+      LOG_LEVEL:             ${LOG_LEVEL:-info}
+    volumes:
+      - document_uploads_data:/app/uploads
+    depends_on:
+      document-db:
+        condition: service_healthy
+      auth-service:
+        condition: service_healthy
+      academic-service:
+        condition: service_healthy
+    networks:
+      - ofppt_network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3003/api/health"]
+      interval: 15s
+      timeout:  5s
+      retries:  5
+      start_period: 40s
+
+  api-gateway:
+    build:
+      context: ./api-gateway
+      dockerfile: Dockerfile
+    container_name: api-gateway
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV:              production
+      PORT:                  3000
+      AUTH_SERVICE_URL:      http://auth-service:3001
+      ACADEMIC_SERVICE_URL:  http://academic-service:3002
+      DOCUMENT_SERVICE_URL:  http://document-service:3003
+      FRONTEND_URL:          ${FRONTEND_URL:-http://localhost:5173}
+      LOG_LEVEL:             ${LOG_LEVEL:-info}
+    depends_on:
+      auth-service:
+        condition: service_healthy
+      academic-service:
+        condition: service_healthy
+      document-service:
+        condition: service_healthy
+    networks:
+      - ofppt_network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/health"]
+      interval: 15s
+      timeout:  5s
+      retries:  3
+      start_period: 20s

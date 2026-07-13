@@ -1,0 +1,68 @@
+generator client {
+  provider = "prisma-client-js"
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model Document {
+  id          Int          @id @default(autoincrement())
+  title       String       @db.VarChar(255)
+  type        DocumentType
+  uploaded_by Int
+  file_path   String       @db.VarChar(255)
+  upload_date DateTime     @default(now())
+
+  module_documents     ModuleDocument[]
+  exercise_assignments ExerciseAssignment[]
+}
+
+enum DocumentType {
+  course
+  exercise
+  resource
+}
+
+model ModuleDocument {
+  module_id   Int
+  document_id Int
+
+  document Document @relation(fields: [document_id], references: [id], onDelete: Cascade)
+
+  @@id([module_id, document_id])
+}
+
+model ExerciseAssignment {
+  id          Int       @id @default(autoincrement())
+  document_id Int
+  module_id   Int
+  group_id    Int
+  assigned_by Int
+  due_date    DateTime?
+  created_at  DateTime  @default(now())
+
+  document    Document             @relation(fields: [document_id], references: [id])
+  submissions ExerciseSubmission[]
+}
+
+model ExerciseSubmission {
+  id                     Int              @id @default(autoincrement())
+  exercise_assignment_id Int
+  submitted_by           Int
+  file_path              String           @db.VarChar(255)
+  submission_date        DateTime         @default(now())
+  status                 SubmissionStatus @default(pending)
+  grade                  Float?
+  feedback               String?          @db.Text
+
+  assignment ExerciseAssignment @relation(fields: [exercise_assignment_id], references: [id])
+}
+
+enum SubmissionStatus {
+  pending
+  reviewed
+  graded
+}

@@ -1,0 +1,72 @@
+version: '3.9'
+
+# ─────────────────────────────────────────────────────────────────────────────
+# STANDALONE — academic service only
+#
+# Use this when auth-service is already running separately.
+#
+#   docker compose up --build
+#
+# Requires auth-service to be reachable. Set AUTH_SERVICE_URL in .env:
+#   • auth-service running via its own docker compose → http://localhost:3001
+#   • auth-service running natively                  → http://localhost:3001
+#
+# For a fresh start with EVERYTHING together use:
+#   docker compose -f docker-compose.full.yml up --build
+# ─────────────────────────────────────────────────────────────────────────────
+
+volumes:
+  academic_db_data:
+
+services:
+
+  # ── Academic Database ───────────────────────────────────────────────────────
+  academic-db:
+    image: mysql:8.0
+    container_name: academic-db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${ACADEMIC_MYSQL_ROOT_PASSWORD:-rootpassword}
+      MYSQL_DATABASE:      academic_db
+      MYSQL_USER:          ${ACADEMIC_MYSQL_USER:-acaduser}
+      MYSQL_PASSWORD:      ${ACADEMIC_MYSQL_PASSWORD:-acadpassword}
+    ports:
+      - "3308:3306"
+    volumes:
+      - academic_db_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${ACADEMIC_MYSQL_ROOT_PASSWORD:-rootpassword}"]
+      interval: 10s
+      timeout:  5s
+      retries:  10
+      start_period: 30s
+
+  # ── Academic Service ────────────────────────────────────────────────────────
+  academic-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: academic-service
+    restart: unless-stopped
+    ports:
+      - "3002:3002"
+    environment:
+      NODE_ENV:                          ${NODE_ENV:-development}
+      PORT:                              3002
+      DATABASE_URL:                      mysql://${ACADEMIC_MYSQL_USER:-acaduser}:${ACADEMIC_MYSQL_PASSWORD:-acadpassword}@academic-db:3306/academic_db
+      AUTH_SERVICE_URL:                  ${AUTH_SERVICE_URL:-http://host.docker.internal:3001}
+      FRONTEND_URL:                      ${FRONTEND_URL:-http://localhost:5173}
+      CANCELLED_INSTANCE_RETENTION_DAYS: ${CANCELLED_INSTANCE_RETENTION_DAYS:-30}
+      LOG_LEVEL:                         ${LOG_LEVEL:-info}
+    depends_on:
+      academic-db:
+        condition: service_healthy
+    extra_hosts:
+      # Allows the container to reach auth-service running on the host machine
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3002/health"]
+      interval: 15s
+      timeout:  5s
+      retries:  5
+      start_period: 30s

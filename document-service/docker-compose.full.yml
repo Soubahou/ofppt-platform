@@ -1,0 +1,173 @@
+version: '3.9'
+
+# Full OFPPT stack: auth-service + academic-service + document-service
+# Usage:  docker compose -f docker-compose.full.yml up --build
+
+services:
+
+  # ── Auth DB ─────────────────────────────────────────────────────────────────
+  auth-db:
+    image: mysql:8.0
+    container_name: auth-db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${AUTH_MYSQL_ROOT_PASSWORD:-rootpassword}
+      MYSQL_DATABASE:      auth_db
+      MYSQL_USER:          ${AUTH_MYSQL_USER:-authuser}
+      MYSQL_PASSWORD:      ${AUTH_MYSQL_PASSWORD:-authpassword}
+    ports:
+      - '3307:3306'
+    volumes:
+      - auth_db_data:/var/lib/mysql
+    networks:
+      - ofppt_network
+    healthcheck:
+      test: ['CMD', 'mysqladmin', 'ping', '-h', 'localhost']
+      interval: 10s
+      timeout:  5s
+      retries:  5
+
+  # ── Auth Service ────────────────────────────────────────────────────────────
+  auth-service:
+    build:
+      context: ../auth-service
+    container_name: auth-service
+    restart: unless-stopped
+    depends_on:
+      auth-db:
+        condition: service_healthy
+    ports:
+      - '3001:3001'
+    environment:
+      PORT:         3001
+      NODE_ENV:     development
+      DATABASE_URL: mysql://${AUTH_MYSQL_USER:-authuser}:${AUTH_MYSQL_PASSWORD:-authpassword}@auth-db:3306/auth_db
+      JWT_SECRET:   ${JWT_SECRET:-change_me_in_production_min_32_chars}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-7d}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:5173}
+      LOG_LEVEL:    info
+    networks:
+      - ofppt_network
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://localhost:3001/api/health']
+      interval: 15s
+      timeout:  5s
+      retries:  3
+
+  # ── Academic DB ─────────────────────────────────────────────────────────────
+  academic-db:
+    image: mysql:8.0
+    container_name: academic-db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${ACADEMIC_MYSQL_ROOT_PASSWORD:-rootpassword}
+      MYSQL_DATABASE:      academic_db
+      MYSQL_USER:          ${ACADEMIC_MYSQL_USER:-acaduser}
+      MYSQL_PASSWORD:      ${ACADEMIC_MYSQL_PASSWORD:-acadpassword}
+    ports:
+      - '3308:3306'
+    volumes:
+      - academic_db_data:/var/lib/mysql
+    networks:
+      - ofppt_network
+    healthcheck:
+      test: ['CMD', 'mysqladmin', 'ping', '-h', 'localhost']
+      interval: 10s
+      timeout:  5s
+      retries:  5
+
+  # ── Academic Service ────────────────────────────────────────────────────────
+  academic-service:
+    build:
+      context: ../academic-service
+    container_name: academic-service
+    restart: unless-stopped
+    depends_on:
+      academic-db:
+        condition: service_healthy
+      auth-service:
+        condition: service_healthy
+    ports:
+      - '3002:3002'
+    environment:
+      PORT:              3002
+      NODE_ENV:          development
+      DATABASE_URL:      mysql://${ACADEMIC_MYSQL_USER:-acaduser}:${ACADEMIC_MYSQL_PASSWORD:-acadpassword}@academic-db:3306/academic_db
+      AUTH_SERVICE_URL:  http://auth-service:3001
+      FRONTEND_URL:      ${FRONTEND_URL:-http://localhost:5173}
+      LOG_LEVEL:         info
+    networks:
+      - ofppt_network
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://localhost:3002/api/health']
+      interval: 15s
+      timeout:  5s
+      retries:  3
+
+  # ── Document DB ─────────────────────────────────────────────────────────────
+  document-db:
+    image: mysql:8.0
+    container_name: document-db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DOCUMENT_MYSQL_ROOT_PASSWORD:-rootpassword}
+      MYSQL_DATABASE:      document_db
+      MYSQL_USER:          ${DOCUMENT_MYSQL_USER:-docuser}
+      MYSQL_PASSWORD:      ${DOCUMENT_MYSQL_PASSWORD:-docpassword}
+    ports:
+      - '3309:3306'
+    volumes:
+      - document_db_data:/var/lib/mysql
+    networks:
+      - ofppt_network
+    healthcheck:
+      test: ['CMD', 'mysqladmin', 'ping', '-h', 'localhost']
+      interval: 10s
+      timeout:  5s
+      retries:  5
+
+  # ── Document Service ────────────────────────────────────────────────────────
+  document-service:
+    build:
+      context: ../document-service
+    container_name: document-service
+    restart: unless-stopped
+    depends_on:
+      document-db:
+        condition: service_healthy
+      auth-service:
+        condition: service_healthy
+      academic-service:
+        condition: service_healthy
+    ports:
+      - '3003:3003'
+    environment:
+      PORT:                    3003
+      NODE_ENV:                development
+      DATABASE_URL:            mysql://${DOCUMENT_MYSQL_USER:-docuser}:${DOCUMENT_MYSQL_PASSWORD:-docpassword}@document-db:3306/document_db
+      AUTH_SERVICE_URL:        http://auth-service:3001
+      ACADEMIC_SERVICE_URL:    http://academic-service:3002
+      FRONTEND_URL:            ${FRONTEND_URL:-http://localhost:5173}
+      UPLOAD_DIR:              uploads
+      MAX_DOCUMENT_SIZE_MB:    20
+      MAX_SUBMISSION_SIZE_MB:  10
+      LOG_LEVEL:               info
+    volumes:
+      - document_uploads_data:/app/uploads
+    networks:
+      - ofppt_network
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://localhost:3003/api/health']
+      interval: 15s
+      timeout:  5s
+      retries:  3
+
+networks:
+  ofppt_network:
+    driver: bridge
+
+volumes:
+  auth_db_data:
+  academic_db_data:
+  document_db_data:
+  document_uploads_data:

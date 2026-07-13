@@ -1,0 +1,28 @@
+version: '3.9'
+
+# Standalone gateway — expects the three services to be reachable externally.
+# Usage:  docker compose up --build
+# The AUTH/ACADEMIC/DOCUMENT _SERVICE_URL vars should point to where those
+# services are actually running (host.docker.internal when they run on the host).
+
+services:
+
+  api-gateway:
+    build: .
+    container_name: api-gateway
+    restart: unless-stopped
+    ports:
+      - '3000:3000'
+    environment:
+      PORT:                  3000
+      NODE_ENV:              development
+      AUTH_SERVICE_URL:      ${AUTH_SERVICE_URL:-http://host.docker.internal:3001}
+      ACADEMIC_SERVICE_URL:  ${ACADEMIC_SERVICE_URL:-http://host.docker.internal:3002}
+      DOCUMENT_SERVICE_URL:  ${DOCUMENT_SERVICE_URL:-http://host.docker.internal:3003}
+      FRONTEND_URL:          ${FRONTEND_URL:-http://localhost:5173}
+      LOG_LEVEL:             info
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://localhost:3000/health']
+      interval: 15s
+      timeout:  5s
+      retries:  3
